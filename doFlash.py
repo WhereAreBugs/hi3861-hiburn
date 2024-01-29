@@ -1,8 +1,9 @@
+import sys
 import time
 from os.path import basename
 from time import sleep
 import serial
-from progress.bar import Bar
+from tqdm.auto import tqdm
 import struct
 
 # Magic number
@@ -78,18 +79,24 @@ def loady(ser, name, data):
                 return False
         else:
             break
-
-    with Bar(max=len(data)) as bar:
-        for i in range(0, len(data), 1024):
-            while True:
-                idx = i // 1024 + 1
-                block = data[i:i + 1024]
-                ser.write(_stx(idx, block))
-                if not _read(Y_ACK):
-                    print(f"[WARNING] 在第{idx}kb处发生了丢包，正在尝试自动重传....")
-                    continue
-                bar.next(len(block))
-                break
+    time_in_send = 0
+    time_in_wait = 0
+    for i in tqdm(range(0, len(data), 1024), smoothing=0.1, desc=f"正在发送{name}数据包", unit="kb", leave=False,
+                  dynamic_ncols=True, file=sys.stdout):
+        while True:
+            idx = i // 1024 + 1
+            block = data[i:i + 1024]
+            start_time = time.time_ns()
+            ser.write(_stx(idx, block))
+            time_in_send += time.time_ns() - start_time
+            start_time = time.time_ns()
+            if not _read(Y_ACK):
+                sys.stdout = sys.__stderr__
+                print(f"\r[WARNING] 在第{idx}kb处发生了丢包，正在尝试自动重传....", end='\n', flush=True)
+                sys.stdout = sys.__stdout__
+                continue
+            time_in_wait += time.time_ns() - start_time
+            break
 
     ser.write(Y_EOT)
     start_time = time.time()
@@ -104,12 +111,13 @@ def loady(ser, name, data):
             break
 
     ser.write(_soh(0))
+
     if not _read(Y_ACK):
         time.sleep(0.5)
         print("[ERROR] _soh阶段等待Y_ACK失败!")
         _print_device_logs(ser.read(1024))
         return False
-
+    print(f"[INFO] 烧录完成，数据发送耗时:{time_in_send / 1000000} ms, 等待Y_ACK耗时:{time_in_wait / 1000000} ms")
     return True
 
 
@@ -145,23 +153,24 @@ def _print_device_logs(data):
     print(data.decode('ascii', errors='replace').strip())
 
 
-class hiburn_4_hi3861():
-    def __init__(self, ser, baudrate, allInOneBin: str, loaderboot_bin):
+class hiburn_hi3861():
+    def __init__(self, ser, baudrate, allInOneBin, loaderboot_bin, partition_tables):
         self.ser = ser
         self.baudrate = str(baudrate)  # default 115200
         self.loaderboot_bin = loaderboot_bin
-        self.allInOneBin = allInOneBin
-        self.loaderboot_size = len(self.loaderboot_bin)
+        self.app_burn_bin = allInOneBin
+        for i in range(2):
+            if partition_tables[i]['type'] == 0:
+                self.loaderboot_name = partition_tables[i]['filename']
+            elif partition_tables[i]['type'] == 1:
+                self.app_burn_name = partition_tables[i]['filename']
 
     def flash(self):
-        with open(self.loaderboot_bin, 'rb') as f:
-            loaderboot = f.read()
-
-        with open(self.allInOneBin, 'rb') as f:
-            allInOne = f.read()
+        loaderboot = self.loaderboot_bin
+        app_burn_bin = self.app_burn_bin
 
         partitions = [
-            [0x0000, len(allInOne), basename(self.allInOneBin), allInOne],
+            [0x0000, len(app_burn_bin), basename(self.app_burn_name), app_burn_bin],
         ]
 
         ser = serial.Serial(self.ser, 115200, timeout=0.05)
@@ -182,9 +191,10 @@ class hiburn_4_hi3861():
                     print('原始返回数据: ', r)
                     return
 
-        print('设备连接成功，即将开始烧录')
+        print(f'设备连接成功')
 
         if ser.baudrate != self.baudrate:
+            print(f'当前选择的波特率与默认不符，正在协商波特率{self.baudrate}')
             ser.close()
             ser.baudrate = self.baudrate
             ser.open()
@@ -200,10 +210,10 @@ class hiburn_4_hi3861():
         # Read logs
         for _ in self._read_cmd(ser):
             continue
+        print("烧录过程开始...")
+        print(f'Run {basename(self.loaderboot_name)}...')
 
-        print(f'Run {basename(self.loaderboot_bin)}...')
-
-        if not loady(ser, basename(self.loaderboot_bin), loaderboot):
+        if not loady(ser, basename(self.loaderboot_name), loaderboot):
             print('Failed to load loaderboot')
             return
 
