@@ -4,6 +4,11 @@
 
 一个跨平台的Hi3861的hiburn协议的烧录脚本。<br>
 
+### 使用
+
+用法很简单，只需要传入要烧录的文件路径即可，支持将文件拖拽到python文件上。<br>
+使用-h可以查看帮助
+
 ### 参考
 
 - [Hi3861-Notes](https://github.com/koendv/hi3861_notes) 提供大致思路

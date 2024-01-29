@@ -175,7 +175,7 @@ class hiburn_hi3861():
 
         ser = serial.Serial(self.ser, 115200, timeout=0.05)
 
-        print('等待设备重置......')
+        print('[INFO] 等待设备重置......')
 
         connected = False
         while not connected:
@@ -187,14 +187,14 @@ class hiburn_hi3861():
                     connected = True
                     break
                 else:
-                    print('连接失败，建立通讯出现问题')
-                    print('原始返回数据: ', r)
+                    print('[ERROR] 连接失败，建立通讯出现问题')
+                    print('[ERROR] 原始返回数据: ', r)
                     return
 
-        print(f'设备连接成功')
+        print('[INFO] 设备连接成功')
 
         if ser.baudrate != self.baudrate:
-            print(f'当前选择的波特率与默认不符，正在协商波特率{self.baudrate}')
+            print(f'[INFO] 当前选择的波特率不为115200，正在协商波特率{self.baudrate}')
             ser.close()
             ser.baudrate = self.baudrate
             ser.open()
@@ -210,21 +210,23 @@ class hiburn_hi3861():
         # Read logs
         for _ in self._read_cmd(ser):
             continue
-        print("烧录过程开始...")
-        print(f'Run {basename(self.loaderboot_name)}...')
+        print("[INFO] 烧录过程开始...")
+        print(f'开始载入 {basename(self.loaderboot_name)}...', flush=True)
 
         if not loady(ser, basename(self.loaderboot_name), loaderboot):
-            print('Failed to load loaderboot')
+            print('[ERROR] Failed to load loaderboot')
             return
 
         # Read logs and check
         for r in self._read_cmd(ser):
             if r != CMD_ACK_SUCCESS:
-                print('Failed to load loaderboot')
+                print('[ERROR] Failed to load loaderboot')
                 return
 
+        sleep(0.1)
+
         for [addr, size, name, data] in partitions:
-            print(f'Download {name}...')
+            print(f'开始下载 {name}...')
 
             ser.write(cmd_download_flash(
                 addr, size, align_up(size, 4096)))
@@ -233,24 +235,24 @@ class hiburn_hi3861():
 
             for r in self._read_cmd(ser):
                 if r != CMD_ACK_SUCCESS:
-                    print(f'Failed to start download of {name}')
+                    print(f'[ERROR] Failed to start download of {name}')
                     return
 
             if not loady(ser, name, data):
-                print(f'Failed to download {name}')
+                print(f'[ERROR] Failed to download {name}')
                 return
 
             # Read logs and check
             for r in self._read_cmd(ser):
                 if r != CMD_ACK_SUCCESS:
-                    print(f'Failed to finish download of {name}')
+                    print(f'[ERROR] Failed to finish download of {name}')
                     return
 
         print('Done')
-        print("正在尝试自动重置....")
+        print("[INFO] 正在尝试自动重置....")
         ser.write(make_cmd(struct.pack('<H', CMD_RESET)))
         sleep(0.1)
-        print('已完成')
+        print('[INFO] 已完成')
 
     def _read_cmd(self, ser, wait=True):
         result = []
